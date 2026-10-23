@@ -2,6 +2,8 @@ import os
 import re
 import secrets
 import sqlite3
+import logging
+from contextlib import contextmanager
 from pathlib import Path
 
 import bcrypt
@@ -12,8 +14,12 @@ BASE_DIR = Path(__file__).resolve().parent
 DATABASE = BASE_DIR / "users.db"
 
 app = Flask(__name__)
+secret_key = os.environ.get("SECRET_KEY")
+if not secret_key:
+    logging.warning("SECRET_KEY is not set; using a temporary development key. Set SECRET_KEY before deployment.")
+    secret_key = secrets.token_hex(32)
 app.config.update(
-    SECRET_KEY=os.environ.get("SECRET_KEY") or secrets.token_hex(32),
+    SECRET_KEY=secret_key,
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=os.environ.get("COOKIE_SECURE", "0") == "1",
@@ -23,10 +29,18 @@ app.config.update(
 csrf = CSRFProtect(app)
 
 
+@contextmanager
 def get_db():
     connection = sqlite3.connect(DATABASE, timeout=10)
     connection.row_factory = sqlite3.Row
-    return connection
+    try:
+        yield connection
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
 
 
 def init_db():
